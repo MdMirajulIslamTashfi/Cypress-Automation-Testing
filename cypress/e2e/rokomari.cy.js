@@ -1,35 +1,102 @@
+/// <reference types="cypress" />
+
 const BOOK_NAME_BN = 'তিনি ও সে'
 const BOOK_NAME_EN = 'tini-o-se'
 const BOOK_NAME_ID = '875'
 const WAIT = 2000 // change this number to speed up or slow down
 
 const CATEGORY = 'https://www.rokomari.com/book/category/1/book'
-const pageUrl = (page) => `${CATEGORY}?page=${page}` // confirm the param name (step 2 below)
 
-// Fill these in with real selectors (see "Find the selectors")
-const SEL = {
-  card: '.book-list-wrapper', // one book tile in the grid (repeats for every book)
-  title: '.book-title', // the title text inside a tile
-  pageLinks: '.pagination a', // pagination number links
-  productTitle: 'h1', // the title on the book's own page
+// ================== SET THESE BEFORE RUNNING ==================
+const PAGE = 2 // which page of the category list
+const ROW = 1 // which row on that page (1 = top row)
+const COL = 1 // which column in that row (1 = leftmost)
+// ===============================================================
+
+const pageUrl = (page) => `${CATEGORY}?page=${page}`
+
+// Grid tiles only. Matches the class prefix, since the hash suffix changes on site updates
+const BOOK_LINK = 'a[class*="productContainer_productDetailsBody"]'
+
+// A tile can have several links to the same book, so keep one per book
+function uniqueBooks($links) {
+  const seen = new Set()
+  return $links.filter((_, a) => {
+    const path = new URL(a.href).pathname
+    if (seen.has(path)) return false
+    seen.add(path)
+    return true
+  })
 }
 
-// How many columns the grid has = how many tiles share the first tile's row
-function columnCount($cards) {
-  const top = $cards[0].getBoundingClientRect().top
-  return $cards.filter((_, el) => Math.abs(el.getBoundingClientRect().top - top) < 5).length
+// Group visible tiles into rows by their screen position, then sort each row left to right
+function gridRows($books) {
+  const items = $books
+    .toArray()
+    .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+    .filter(({ rect }) => rect.width > 0 && rect.height > 0) // skip hidden duplicates
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left)
+
+  const rows = []
+  for (const item of items) {
+    const last = rows[rows.length - 1]
+    if (last && Math.abs(last[0].rect.top - item.rect.top) < 10) last.push(item)
+    else rows.push([item])
+  }
+  rows.forEach((row) => row.sort((a, b) => a.rect.left - b.rect.left))
+  return rows
 }
 
-// Click a tile and check we landed on that same book
-function openBook($card) {
-  const title = $card.find(SEL.title).text().trim()
-  cy.log(`Opening: ${title}`)
-  cy.wrap($card)
-    .find('a')
+// Click the book by its ID, re-finding the link if the page re-renders
+function openBook(path) {
+  const id = path.split('/')[2] // "/book/123/some-name" → "123"
+  cy.log(`Opening: ${decodeURIComponent(path)}`)
+
+  // Remove target="_blank" at the moment of the click, so the book opens in this tab
+  cy.document().then((doc) => {
+    doc.addEventListener(
+      'click',
+      (e) => {
+        const a = e.target.closest && e.target.closest('a')
+        if (a) a.removeAttribute('target')
+      },
+      true,
+    )
+  })
+
+  cy.get(`a[href*="/book/${id}/"]:has(img)`).first().click()
+  cy.location('pathname', { timeout: 15000 }).should('include', `/book/${id}/`)
+  cy.wait(WAIT)
+}
+
+// Search for the book and open its page from the results
+function searchAndOpenBook() {
+  searchBox().click().type(BOOK_NAME_BN, { delay: 150 })
+  searchBox().type('{enter}')
+
+  cy.contains('a[href*="/book/"]', BOOK_NAME_BN, { timeout: 15000 })
     .first()
-    .invoke('removeAttr', 'target') // keep it in the same tab; Cypress can't follow new tabs
-    .click()
-  cy.get(SEL.productTitle).should('contain', title)
+    .scrollIntoView()
+    .should('be.visible')
+  cy.wait(WAIT)
+
+  // remove target="_blank" so it opens in the SAME tab, then click
+  cy.contains('a[href*="/book/"]', BOOK_NAME_BN).first().invoke('removeAttr', 'target').click()
+  cy.wait(WAIT)
+
+  cy.url({ timeout: 15000 }).should('include', '/book/')
+  cy.contains(BOOK_NAME_BN).should('be.visible')
+}
+
+// Add the open book to the cart and go to the cart page
+function addToCartAndOpenCart() {
+  cy.contains('button', 'Add to Cart').should('be.visible').click()
+  cy.wait(WAIT)
+
+  cy.contains('button', 'Go to Cart ->').should('be.visible').click()
+  cy.url({ timeout: 15000 }).should('include', '/cart')
+  cy.contains(BOOK_NAME_BN).should('be.visible')
+  cy.wait(WAIT)
 }
 
 // The site may have its own JS errors that are not related to our test.
@@ -41,195 +108,100 @@ const searchBox = () => cy.get('input[type="text"]:visible, input[type="search"]
 
 describe('Rokomari book search', () => {
   beforeEach(() => {
-    cy.viewport(1366, 768) // fixed width so the grid layout is consistent
+    cy.viewport(1366, 768)
     cy.visit('https://www.rokomari.com/')
     cy.wait(WAIT) // let the home page finish loading so you can see it
   })
 
-  // it('opens the Rokomari home page', () => {
-  //   cy.url().should('include', 'rokomari.com')
-  //   cy.title().should('contain', 'Rokomari')
-
-  //   cy.wait(WAIT)
-  // })
-
-  // it('searches for the book name', () => {
-  //   searchBox().should('be.visible').click()
-  //   cy.wait(WAIT)
-
-  //   searchBox().type(BOOK_NAME_BN, { delay: 150 }) // types slowly
-  //   searchBox().type('{enter}')
-
-  //   // We should now be on the search results page
-  //   cy.url().should('include', 'search')
-  //   cy.contains(BOOK_NAME_BN).should('exist')
-
-  //   cy.wait(WAIT)
-  // })
-
-  // it('opens the book profile page from the search results', () => {
-  //   // Step 1: type the book name and search
-  //   searchBox().click().type(BOOK_NAME_BN, { delay: 150 })
-  //   searchBox().type('{enter}')
-
-  //   // Step 2: find the book link in the results
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN, { timeout: 15000 })
-  //     .first()
-  //     .scrollIntoView()
-  //     .should('be.visible')
-  //   cy.wait(WAIT)
-
-  //   // Step 3: remove target="_blank" so it opens in the SAME tab, then click
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN).first().invoke('removeAttr', 'target').click()
-  //   cy.wait(WAIT)
-
-  //   // Step 4: check that the book profile page opened
-  //   cy.url({ timeout: 15000 }).should('include', '/book/')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-
-  //   cy.wait(WAIT * 2)
-  // })
-
-  // it('opens the book profile page directly', () => {
-  //   // Step 1: visit the book profile page directly
-  //   cy.visit(`https://www.rokomari.com/book/${BOOK_NAME_ID}/${BOOK_NAME_EN}`)
-  //   cy.wait(WAIT)
-
-  //   // Step 2: check that the book profile page opened
-  //   cy.url({ timeout: 15000 }).should('include', '/book/')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-
-  //   cy.wait(WAIT * 2)
-  // })
-
-  // it('opens the book profile page from the search results and adds to cart', () => {
-  //   // Step 1: type the book name and search
-  //   searchBox().click().type(BOOK_NAME_BN, { delay: 150 })
-  //   searchBox().type('{enter}')
-
-  //   // Step 2: find the book link in the results
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN, { timeout: 15000 })
-  //     .first()
-  //     .scrollIntoView()
-  //     .should('be.visible')
-  //   cy.wait(WAIT)
-
-  //   // Step 3: remove target="_blank" so it opens in the SAME tab, then click
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN).first().invoke('removeAttr', 'target').click()
-  //   cy.wait(WAIT)
-
-  //   // Step 4: check that the book profile page opened
-  //   cy.url({ timeout: 15000 }).should('include', '/book/')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-
-  //   // Step 5: click the "Add to Cart" button
-  //   cy.contains('button', 'Add to Cart').should('be.visible').click()
-  //   cy.get('#js--add-to-cart-button').click()
-  //   cy.wait(WAIT)
-
-  //   // Step 6: check that the cart page opened
-  //   cy.get('#js--add-to-cart-button').click()
-  //   cy.url({ timeout: 15000 }).should('include', '/cart')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-
-  //   cy.wait(WAIT * 2)
-  // })
-
-  // it('proceeds to checkout from the cart page', () => {
-  //   // Step 1: type the book name and search
-  //   searchBox().click().type(BOOK_NAME_BN, { delay: 150 })
-  //   searchBox().type('{enter}')
-
-  //   // Step 2: find the book link in the results
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN, { timeout: 15000 })
-  //     .first()
-  //     .scrollIntoView()
-  //     .should('be.visible')
-  //   cy.wait(WAIT)
-
-  //   // Step 3: remove target="_blank" so it opens in the SAME tab, then click
-  //   cy.contains('a[href*="/book/"]', BOOK_NAME_BN).first().invoke('removeAttr', 'target').click()
-  //   cy.wait(WAIT)
-
-  //   // Step 4: check that the book profile page opened
-  //   cy.url({ timeout: 15000 }).should('include', '/book/')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-
-  //   // Step 5: click the "Add to Cart" button
-  //   cy.contains('button', 'Add to Cart').should('be.visible').click()
-  //   cy.get('#js--add-to-cart-button').click()
-  //   cy.wait(WAIT)
-
-  //   // Step 6: check that the cart page opened
-  //   cy.contains('button', 'Go to Cart ->').should('be.visible').click()
-  //   cy.url({ timeout: 15000 }).should('include', '/cart')
-  //   cy.contains(BOOK_NAME_BN).should('be.visible')
-  //   cy.wait(WAIT)
-
-  //   // Step 2: click the "Proceed to Checkout" button
-  //   cy.contains('button', 'অর্ডার করতে এগিয়ে যান').should('be.visible').click()
-  //   cy.wait(WAIT)
-  // })
-
-  it('searches book from book category', () => {
-    searchBox().should('be.visible').click().type('বই{enter}')
+  it('opens the Rokomari home page', () => {
+    cy.url().should('include', 'rokomari.com')
+    cy.title().should('contain', 'Rokomari')
     cy.wait(WAIT)
-
-    // cy.contains('a', 'সাহিত্য').should('be.visible').click()
-    // cy.wait(WAIT)
-
-    // cy.contains('a', 'উপন্যাস').should('be.visible').click()
-    // cy.wait(WAIT)
-
-    // searchBox().should('be.visible').click()
-    // cy.wait(WAIT)
-
-    // searchBox().type(BOOK_NAME_BN, { delay: 150 }) // types slowly
-    // searchBox().type('{enter}')
-
-    // // We should now be on the search results page
-    // cy.url().should('include', 'search')
-    // cy.contains(BOOK_NAME_BN).should('exist')
-
-    // cy.wait(WAIT)
   })
 
-  it('opens the book at a given page, row and column', () => {
-    const page = Cypress.env('page') || 1
-    const row = Cypress.env('row') || 1
-    const col = Cypress.env('col') || 1
+  it('searches for the book name', () => {
+    searchBox().should('be.visible').click()
+    cy.wait(WAIT)
 
-    cy.visit(pageUrl(page))
-    cy.get(SEL.card)
+    searchBox().type(BOOK_NAME_BN, { delay: 150 }) // types slowly
+    searchBox().type('{enter}')
+
+    // We should now be on the search results page
+    cy.url().should('include', 'search')
+    cy.contains(BOOK_NAME_BN).should('exist')
+    cy.wait(WAIT)
+  })
+
+  it('opens the book profile page from the search results', () => {
+    searchAndOpenBook()
+    cy.wait(WAIT * 2)
+  })
+
+  it('opens the book profile page directly', () => {
+    cy.visit(`https://www.rokomari.com/book/${BOOK_NAME_ID}/${BOOK_NAME_EN}`)
+    cy.wait(WAIT)
+
+    cy.url({ timeout: 15000 }).should('include', '/book/')
+    cy.contains(BOOK_NAME_BN).should('be.visible')
+    cy.wait(WAIT * 2)
+  })
+
+  it('adds the book to the cart', () => {
+    searchAndOpenBook()
+    addToCartAndOpenCart()
+  })
+
+  it('proceeds to checkout from the cart page', () => {
+    searchAndOpenBook()
+    addToCartAndOpenCart()
+
+    // Goes to the checkout step only; this test never places an order
+    cy.contains('button', 'অর্ডার করতে এগিয়ে যান').click()
+    cy.wait(WAIT)
+  })
+})
+
+describe('Rokomari category grid', () => {
+  // beforeEach(() => cy.viewport(1920, 4623.5))
+  beforeEach(() => cy.viewport(1920, 1080))
+
+  it(`opens the book on page ${PAGE}, row ${ROW}, column ${COL}`, () => {
+    cy.visit(pageUrl(PAGE))
+    cy.get(BOOK_LINK, { timeout: 15000 })
       .should('have.length.greaterThan', 0)
-      .then(($cards) => {
-        const cols = columnCount($cards)
-        const index = (row - 1) * cols + (col - 1)
-        cy.log(`Page ${page}, row ${row}, col ${col} → book #${index + 1} (${cols} columns)`)
-        expect(index, 'that row/column exists on the page').to.be.lessThan($cards.length)
-        openBook($cards.eq(index))
+      .then(($links) => {
+        const rows = gridRows(uniqueBooks($links))
+        cy.log(`${rows.length} rows, books per row: ${rows.map((r) => r.length).join(', ')}`)
+
+        expect(ROW, 'row exists').to.be.at.most(rows.length)
+        expect(COL, 'column exists in that row').to.be.at.most(rows[ROW - 1].length)
+
+        const target = rows[ROW - 1][COL - 1].el
+        cy.wrap(target).scrollIntoView().invoke('css', 'outline', '4px solid red')
+        cy.wait(WAIT) // look at the red box before it clicks
+
+        openBook(new URL(target.href).pathname)
       })
   })
 
   it('opens a random book from a random page', () => {
     cy.visit(pageUrl(1))
-    cy.get(SEL.pageLinks).then(($links) => {
-      const numbers = $links
+    cy.get('a[href*="page="]', { timeout: 15000 }).then(($links) => {
+      const pages = $links
         .toArray()
-        .map((a) => parseInt(a.innerText, 10))
-        .filter((n) => !isNaN(n))
-      const lastPage = Math.max(...numbers)
+        .map((a) => Number(new URL(a.href).searchParams.get('page')))
+        .filter((n) => n > 0)
+      const lastPage = Math.max(...pages)
       const page = Cypress._.random(1, lastPage)
       cy.log(`Random page ${page} of ${lastPage}`)
       cy.visit(pageUrl(page))
     })
 
-    cy.get(SEL.card)
-      .should('have.length.greaterThan', 0)
-      .then(($cards) => {
-        const index = Cypress._.random(0, $cards.length - 1)
-        cy.log(`Random book #${index + 1} of ${$cards.length}`)
-        openBook($cards.eq(index))
-      })
+    cy.get(BOOK_LINK, { timeout: 15000 }).then(($links) => {
+      const books = uniqueBooks($links)
+      const index = Cypress._.random(0, books.length - 1)
+      cy.log(`Random book #${index + 1} of ${books.length}`)
+      openBook(new URL(books[index].href).pathname)
+    })
   })
 })

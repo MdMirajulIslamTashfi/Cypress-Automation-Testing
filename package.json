@@ -5,11 +5,12 @@
   "main": "index.js",
   "scripts": {
     "test": "cypress run",
-    "cy:open": "cypress open --browser chrome",
-    "cy:run": "cypress run",
-    "cy:chrome": "cypress run --browser chrome",
+    "open": "cypress open",
+    "run": "cypress run",
+    "chrome": "cypress run --browser chrome",
+    "chrome:open": "cypress open --browser chrome",
+    "chrome:headed": "cypress run --browser chrome --headed",
     "cy:chrome-ne": "cypress run --browser chrome --headed --no-exit",
-    "cy:headed": "cypress run --browser chrome --headed",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
